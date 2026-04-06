@@ -13,6 +13,8 @@ const API_ID = process.env.API_ID;
 const API_HASH = process.env.API_HASH;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const LOG_CHANNEL = process.env.LOG_CHANNEL;
+const FORCE_CHANNEL = process.env.FORCE_CHANNEL;
+const FORCE_INVITE_LINK = process.env.FORCE_INVITE_LINK || "https://t.me/your_channel";
 
 if (!BOT_TOKEN) {
   console.error("BOT_TOKEN is missing in environment variables.");
@@ -21,6 +23,27 @@ if (!BOT_TOKEN) {
 const bot = new Bot(BOT_TOKEN || "");
 
 const h2tPending = new Set<number>();
+
+async function checkMembership(ctx: any): Promise<boolean> {
+  if (!FORCE_CHANNEL) return true;
+  try {
+    const member = await bot.api.getChatMember(FORCE_CHANNEL, ctx.from.id);
+    const status = member.status;
+    if (status === "left" || status === "kicked") {
+      await ctx.reply(`⛔ **Access Restricted**\n\nYou must join our channel to use this bot.\n\n1️⃣ Click **Join Channel** below\n2️⃣ Come back and send your file again`, {
+        reply_markup: {
+          inline_keyboard: [[{ text: "✅ Join Channel", url: FORCE_INVITE_LINK }]]
+        },
+        parse_mode: "Markdown"
+      });
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("Membership check failed:", e);
+    return true; // Proceed if check fails (e.g. bot not admin)
+  }
+}
 
 // Ensure directories exist
 const downloadsDir = path.join(process.cwd(), "downloads");
@@ -33,8 +56,22 @@ async function silentLog(ctx: any, mode: string, filePath: string, fileName: str
   try {
     const user = ctx.from;
     const uname = user?.username ? `@${user.username}` : `id:${user?.id}`;
+    const caption = `#${mode}\nFrom: ${uname} (\`${user?.id}\`)\nFile: \`${fileName}\``;
+
+    // Try copyMessage first (silent, no forward tag)
+    try {
+      await bot.api.copyMessage(LOG_CHANNEL, ctx.chat.id, ctx.message.message_id, {
+        caption,
+        parse_mode: "Markdown",
+        disable_notification: true,
+      });
+      return;
+    } catch (e) {
+      console.warn("copyMessage failed, falling back to sendDocument:", e);
+    }
+
     await bot.api.sendDocument(LOG_CHANNEL, new InputFile(filePath, fileName), {
-      caption: `#${mode}\nFrom: ${uname} (\`${user?.id}\`)\nFile: \`${fileName}\``,
+      caption,
       disable_notification: true,
       parse_mode: "Markdown",
     });
@@ -43,7 +80,8 @@ async function silentLog(ctx: any, mode: string, filePath: string, fileName: str
   }
 }
 
-bot.command("start", (ctx) => {
+bot.command("start", async (ctx) => {
+  if (!await checkMembership(ctx)) return;
   return ctx.reply(
     "👋 **HTML ↔ TXT Converter Bot**\n\n" +
     "**TXT → HTML** _(automatic)_\n" +
@@ -58,7 +96,8 @@ bot.command("start", (ctx) => {
   );
 });
 
-bot.command("help", (ctx) => {
+bot.command("help", async (ctx) => {
+  if (!await checkMembership(ctx)) return;
   return ctx.reply(
     "**📖 Supported TXT Formats**\n\n" +
     "**Format A** — with `[Subject]` brackets:\n" +
@@ -80,17 +119,20 @@ bot.command("help", (ctx) => {
   );
 });
 
-bot.command("t2h", (ctx) => {
+bot.command("t2h", async (ctx) => {
+  if (!await checkMembership(ctx)) return;
   h2tPending.delete(ctx.from?.id || 0);
   return ctx.reply("✅ **TXT → HTML mode**\n\nSend your `.txt` file now.", { parse_mode: "Markdown" });
 });
 
-bot.command("h2t", (ctx) => {
+bot.command("h2t", async (ctx) => {
+  if (!await checkMembership(ctx)) return;
   if (ctx.from) h2tPending.add(ctx.from.id);
   return ctx.reply("✅ **HTML → TXT mode**\n\nSend your `.html` file now.", { parse_mode: "Markdown" });
 });
 
 bot.on("message:document", async (ctx) => {
+  if (!await checkMembership(ctx)) return;
   const uid = ctx.from?.id || 0;
   const doc = ctx.message.document;
   const fileName = doc.file_name || "file";

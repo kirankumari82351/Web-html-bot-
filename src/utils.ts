@@ -187,7 +187,12 @@ export function htmlToTxt(htmlText: string): [string, string] {
   if (!batchName) {
     batchName = $('h1, .title-box h1, .header h1, .batch-title, h2').first().text().trim();
   }
-  if (!batchName) batchName = 'Batch';
+  if (batchName) {
+    // Clean underscores used in filenames as page titles
+    batchName = batchName.replace(/_+/g, ' ').trim();
+  } else {
+    batchName = 'Batch';
+  }
 
   let thumbnailUrl = '';
   $('a').each((_, el) => {
@@ -207,7 +212,7 @@ export function htmlToTxt(htmlText: string): [string, string] {
 
   lines.push(`[Batch Thumbnail] ${batchName} : ${thumbnailUrl || 'https://example.com/thumbnail.jpg'}`);
 
-  // Style C - JS CONFIG with base64 URLs
+  // STYLE C - JS CONFIG with base64 URLs
   const b64Regex = /\{"title"\s*:\s*"([^"]+)"\s*,\s*"link"\s*:\s*"([A-Za-z0-9+/]{20,}=*)"\s*,\s*"type"\s*:\s*"([^"]+)"\}/g;
   let b64Match;
   const b64Items: [string, string, string][] = [];
@@ -253,6 +258,55 @@ export function htmlToTxt(htmlText: string): [string, string] {
     return [batchName, lines.join('\n')];
   }
 
+  // STYLE E — CareerWill tab format
+  const videoTab = $('.tab-content#video');
+  const pdfTab = $('.tab-content#pdf');
+  const otherTab = $('.tab-content#other');
+
+  if (videoTab.length > 0 || pdfTab.length > 0) {
+    const tabs = [
+      { el: videoTab, def: 'Videos' },
+      { el: pdfTab, def: 'PDFs' },
+      { el: otherTab, def: 'Others' },
+    ];
+
+    for (const { el, def } of tabs) {
+      if (el.length === 0) continue;
+      el.find('.folder').each((_, folder) => {
+        const header = $(folder).find('.folder-header');
+        let subject = header.length ? cleanSubject(header.text().trim()) : def;
+
+        if (subject.toLowerCase().includes('thumbnail')) return;
+
+        const content = $(folder).find('.folder-content');
+        if (content.length === 0) return;
+
+        content.find('.card').each((_, card) => {
+          const rawText = $(card).text().trim();
+          const title = cleanTitle(rawText);
+          if (!title) return;
+
+          let url = '';
+          const parent = $(card).parent();
+          if (parent.is('a')) {
+            url = parent.attr('href')?.trim() || '';
+            if (['#', 'javascript:void(0)', ''].includes(url)) url = '';
+          }
+
+          if (!url) {
+            const onclick = $(card).attr('onclick') || '';
+            url = extractOnclickUrl(onclick);
+          }
+
+          if (url) {
+            lines.push(`[${subject}] ${title} : ${url}`);
+          }
+        });
+      });
+    }
+    if (lines.length > 1) return [batchName, lines.join('\n')];
+  }
+
   // Style A - folder-content divs
   const folderDivs = $('.folder-content');
   if (folderDivs.length > 0) {
@@ -278,7 +332,7 @@ export function htmlToTxt(htmlText: string): [string, string] {
         if (href && href !== '#') lines.push(`[${subject}] ${title} : ${href}`);
       });
     });
-    return [batchName, lines.join('\n')];
+    if (lines.length > 1) return [batchName, lines.join('\n')];
   }
 
   // Style B - tab-based
@@ -303,7 +357,7 @@ export function htmlToTxt(htmlText: string): [string, string] {
         if (url) lines.push(`[${subject}] ${title} : ${url}`);
       });
     });
-    return [batchName, lines.join('\n')];
+    if (lines.length > 1) return [batchName, lines.join('\n')];
   }
 
   // Generic fallback
@@ -343,6 +397,20 @@ export function htmlToTxt(htmlText: string): [string, string] {
   });
 
   return [batchName, lines.join('\n')];
+}
+
+function cleanTitle(raw: string): string {
+  let t = raw.trim();
+  const m = t.match(/^\[.+?\]\s*(.*)/);
+  if (m) {
+    t = m[1].trim();
+  }
+  t = t.replace(/:$/, '').trim();
+  return t || raw.trim();
+}
+
+function cleanSubject(headerText: string): string {
+  return headerText.replace(/\s*\(\d+\)\s*$/, '').trim();
 }
 
 function extractOnclickUrl(onclick: string): string {
